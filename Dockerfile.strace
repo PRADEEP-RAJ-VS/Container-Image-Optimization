@@ -1,0 +1,15 @@
+# Use your existing slim image as base
+FROM 637423298517.dkr.ecr.ap-south-1.amazonaws.com/myapp:slim-auto
+
+# Install strace (Alpine-based example)
+USER root
+RUN apk update && apk add --no-cache strace bash
+
+# Set working directory
+WORKDIR /app
+
+# Copy your app files (optional, if not already in image)
+COPY . /app
+
+# Set default command (optional)
+CMD ["/bin/sh"]
