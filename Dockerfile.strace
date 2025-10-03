@@ -1,15 +1,21 @@
-# Use your existing slim image as base
-FROM 637423298517.dkr.ecr.ap-south-1.amazonaws.com/myapp:slim-auto
+FROM ubuntu:20.04   # or debian:bullseye, etc.
 
-# Install strace (Alpine-based example)
-USER root
-RUN apk update && apk add --no-cache strace bash
+# Install dependencies including strace
+RUN apt-get update && apt-get install -y \
+    strace \
+    curl \
+    ca-certificates \
+    procps \
+    findutils \
+    && rm -rf /var/lib/apt/lists/*
 
-# Set working directory
+# Copy your app code
 WORKDIR /app
+COPY . .
 
-# Copy your app files (optional, if not already in image)
-COPY . /app
+# Entrypoint that wraps your app with strace when STRACE=1 is set
+# Example APP_CMD could be: "python3 app.py" or "node server.js"
+ENV APP_CMD="echo hello && sleep 30"
+ENV STRACE=0
 
-# Set default command (optional)
-CMD ["/bin/sh"]
+ENTRYPOINT ["sh","-lc","if [ \"$STRACE\" = \"1\" ]; then strace -f -e trace=file -o /tmp/trace.log $APP_CMD; else exec $APP_CMD; fi"]

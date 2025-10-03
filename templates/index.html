@@ -468,27 +468,47 @@
                             throw new Error(result.error || 'Slimming failed');
                         }
 
-                        // Render before vs after summary
-                        const before = result.before_after?.size_before || result.before_after?.size_before_bytes || 'Unknown';
-                        const after = result.before_after?.size_after || result.before_after?.size_after_bytes || 'Unknown';
+                        // Prefer container FS sizes; fallback to image sizes
+                        const baf = result.before_after || {};
+                        const fsBeforeHuman = baf.size_before && baf.size_before !== 'Unknown' ? baf.size_before : (baf.image_size_before || 'Unknown');
+                        const fsBeforeBytes = baf.size_before_bytes && baf.size_before_bytes !== 'Unknown' ? baf.size_before_bytes : (baf.image_size_before_bytes || 'Unknown');
+                        const fsAfterHuman  = baf.size_after && baf.size_after !== 'Unknown' ? baf.size_after : (baf.image_size_after || 'Unknown');
+                        const fsAfterBytes  = baf.size_after_bytes && baf.size_after_bytes !== 'Unknown' ? baf.size_after_bytes : (baf.image_size_after_bytes || 'Unknown');
+
+                        // Choose most granular unit where values differ
+                        const contrasted = this.formatContrastByUnit(fsBeforeBytes, fsAfterBytes, fsBeforeHuman, fsAfterHuman);
+                        const displayBefore = contrasted.before;
+                        const displayAfter  = contrasted.after;
+
+                        const removedCount = result.removed_files ?? (result.deletion_results ? result.deletion_results.filter(r => r.status === 'removed').length : 0);
+                        const pushLogs = (result.push_result || '').toString();
+
                         slimSummary.innerHTML = `
                             <div class="details-section">
                                 <h3><i class="fas fa-balance-scale"></i> Before vs After</h3>
                                 <div class="results-grid">
                                     <div class="stat-card warning">
                                         <h3><i class="fas fa-hdd"></i> Size Before</h3>
-                                        <div class="value">${result.before_after.size_before}</div>
-                                        <div class="description">Bytes: ${result.before_after.size_before_bytes || 'n/a'}</div>
+                                        <div class="value">${displayBefore}</div>
+                                        <div class="description">Bytes: ${fsBeforeBytes}</div>
                                     </div>
                                     <div class="stat-card success">
                                         <h3><i class="fas fa-save"></i> Size After</h3>
-                                        <div class="value">${result.before_after.size_after}</div>
-                                        <div class="description">Bytes: ${result.before_after.size_after_bytes || 'n/a'}</div>
+                                        <div class="value">${displayAfter}</div>
+                                        <div class="description">Bytes: ${fsAfterBytes}</div>
                                     </div>
+                                </div>
+                                <div class="alert alert-info" style="margin-top: 10px;">
+                                    <i class="fas fa-list"></i>
+                                    Removed files: <strong>${removedCount}</strong>
                                 </div>
                                 <div class="alert alert-success" style="margin-top: 10px;">
                                     <i class="fas fa-check-circle"></i>
                                     Pushed new image: <strong>${result.new_image}</strong>
+                                </div>
+                                <div style="margin-top: 12px;">
+                                    <h4 style="margin-bottom: 8px;"><i class="fas fa-stream"></i> Push Logs</h4>
+                                    <pre style="background:#0b1020;color:#e5e7eb;padding:12px;border-radius:8px;max-height:220px;overflow:auto;white-space:pre-wrap;">${this.escapeHtml(pushLogs)}</pre>
                                 </div>
                             </div>
                         `;
@@ -956,6 +976,16 @@
                 }
             }
 
+            escapeHtml(text) {
+                if (text == null) return '';
+                return text
+                    .replace(/&/g, '&amp;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;')
+                    .replace(/"/g, '&quot;')
+                    .replace(/'/g, '&#039;');
+            }
+
             formatNumber(num) {
                 if (num >= 1000000) {
                     return (num / 1000000).toFixed(1) + 'M';
@@ -963,6 +993,36 @@
                     return (num / 1000).toFixed(1) + 'K';
                 }
                 return num.toString();
+            }
+
+            // Return { before, after } formatted with the most granular unit where values differ
+            formatContrastByUnit(beforeBytes, afterBytes, beforeHumanFallback, afterHumanFallback) {
+                const parseIntSafe = (v) => {
+                    const n = parseInt(v, 10);
+                    return Number.isFinite(n) ? n : NaN;
+                };
+                const b = parseIntSafe(beforeBytes);
+                const a = parseIntSafe(afterBytes);
+                if (Number.isNaN(b) || Number.isNaN(a)) {
+                    return { before: beforeHumanFallback, after: afterHumanFallback };
+                }
+                const units = [
+                    { label: 'GB', factor: 1024 * 1024 * 1024 },
+                    { label: 'MB', factor: 1024 * 1024 },
+                    { label: 'KB', factor: 1024 },
+                    { label: 'B', factor: 1 }
+                ];
+                for (const u of units) {
+                    const vb = Math.floor(b / u.factor);
+                    const va = Math.floor(a / u.factor);
+                    if (vb !== va || u.label === 'B') {
+                        return {
+                            before: `${vb}${u.label}`,
+                            after: `${va}${u.label}`
+                        };
+                    }
+                }
+                return { before: beforeHumanFallback, after: afterHumanFallback };
             }
         }
 
