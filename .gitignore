@@ -45,9 +45,7 @@ next-env.d.ts
 *.lcov
 
 # IDE & Editors
-.vscode/*
-!.vscode/extensions.json
-!.vscode/settings.json
+.vscode/
 .idea
 *.swp
 *.swo
@@ -113,3 +111,16 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
+
+# GitHub workflows and config
+.github/
+
+# Specify tool
+.specify/
+
+# Markdown files
+*.md
+
+# PowerShell scripts
+*.ps1
+
