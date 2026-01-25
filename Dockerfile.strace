@@ -1,0 +1,21 @@
+FROM ubuntu:20.04   # or debian:bullseye, etc.
+
+# Install dependencies including strace
+RUN apt-get update && apt-get install -y \
+    strace \
+    curl \
+    ca-certificates \
+    procps \
+    findutils \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy your app code
+WORKDIR /app
+COPY . .
+
+# Entrypoint that wraps your app with strace when STRACE=1 is set
+# Example APP_CMD could be: "python3 app.py" or "node server.js"
+ENV APP_CMD="echo hello && sleep 30"
+ENV STRACE=0
+
+ENTRYPOINT ["sh","-lc","if [ \"$STRACE\" = \"1\" ]; then strace -f -e trace=file -o /tmp/trace.log $APP_CMD; else exec $APP_CMD; fi"]

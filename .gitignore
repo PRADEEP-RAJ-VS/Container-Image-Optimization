@@ -106,3 +106,10 @@ yarn.lock
 # Session and optimization cache
 .cache/
 *.session
+
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
