@@ -1,0 +1,34 @@
+# Example: Optimized Python 3.9 Image with Runtime Optimization
+FROM python:3.9-slim
+
+# Install runtime optimizer dependencies
+RUN apt-get update && apt-get install -y \
+    curl \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy runtime optimizer into image
+COPY lib/runtime-optimizer.ts /opt/runtime-optimizer.ts
+
+# Install Node.js to run the optimizer (or use a different base)
+# OR use Python version if preferred:
+
+# Pre-cleanup to reduce initial image size
+RUN apt-get clean && \
+    rm -rf /var/lib/apt/lists/* && \
+    rm -rf /usr/share/doc/* && \
+    rm -rf /usr/share/man/* && \
+    find / -type d -name __pycache__ -delete && \
+    find / -name "*.pyc" -delete && \
+    find / -name "*.pyo" -delete
+
+# Set environment variable to enable runtime cleanup
+ENV RUNTIME_OPTIMIZER_ENABLED=true
+ENV RUNTIME_OPTIMIZER_INTERVAL=300000
+
+# Health check that also triggers cleanup
+HEALTHCHECK --interval=5m --timeout=10s --start-period=1m --retries=3 \
+    CMD curl -f http://localhost/health || exit 1
+
+# Your application entrypoint would start the optimizer in background:
+# CMD [ "sh", "-c", "node /opt/runtime-optimizer.js & exec python app.py" ]

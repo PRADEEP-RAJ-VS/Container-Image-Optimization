@@ -1,0 +1,642 @@
+import { execSync } from "child_process"
+import { writeFileSync, mkdirSync, rmSync, existsSync, readFileSync } from "fs"
+import path from "path"
+import tar from "tar-stream"
+import { Readable } from "stream"
+import { tmpdir } from "os"
+
+export interface OptimizationResult {
+  success: boolean
+  originalSize: number
+  optimizedSize: number
+  sizeSavings: number
+  percentSavings: number
+  dockerfile: string
+  optimizedBuffer: Buffer | null
+  error?: string
+}
+
+export async function optimizeDockerImage(
+  fileBuffer: Buffer,
+  originalImageName: string,
+  optimizations: {
+    useMultiStage?: boolean
+    useAlpineBase?: boolean
+    consolidateRuns?: boolean
+    removeCache?: boolean
+  } = {},
+): Promise<OptimizationResult> {
+  const tempDir = path.join(
+    tmpdir(),
+    `docker-optimize-${Date.now()}-${Math.random().toString(36).substring(7)}`,
+  )
+
+  try {
+    mkdirSync(tempDir, { recursive: true })
+
+    console.log("[OPTIMIZER] Starting optimization workflow...")
+    console.log(`[OPTIMIZER] Original image name: ${originalImageName}`)
+
+    const uniqueImageName = `opt-${originalImageName
+      .replace(/[^a-zA-Z0-9-]/g, "-")
+      .toLowerCase()}-${Date.now()}-${Math.random().toString(36).substring(7)}`
+
+    // Extract Dockerfile and detect image type
+    const originalDockerfile = await extractDockerfileFromTar(fileBuffer, tempDir)
+    
+    // Generate optimized Dockerfile - pass BOTH the dockerfile and image name for detection
+    const optimizedDockerfile = generateOptimizedDockerfile(
+      originalDockerfile,
+      originalImageName,
+      optimizations,
+    )
+
+    console.log("[OPTIMIZER] Building optimized image...")
+    const buildSuccess = await buildOptimizedImage(
+      tempDir,
+      optimizedDockerfile,
+      uniqueImageName,
+    )
+
+    if (!buildSuccess) {
+      throw new Error("Failed to build optimized image")
+    }
+
+    // Save optimized image to tar
+    const optimizedTarPath = path.join(tempDir, "optimized-image.tar")
+    await saveImageToTar(uniqueImageName, optimizedTarPath)
+
+    // Get file sizes
+    const originalSize = fileBuffer.length
+    const optimizedTarBuffer = readFileSync(optimizedTarPath)
+    const optimizedSize = optimizedTarBuffer.length
+
+    const sizeSavings = originalSize - optimizedSize
+    const percentSavings = ((sizeSavings / originalSize) * 100).toFixed(2)
+
+    console.log(`[OPTIMIZER] Optimization complete:`)
+    console.log(`  Original: ${(originalSize / 1024 / 1024).toFixed(2)} MB`)
+    console.log(`  Optimized: ${(optimizedSize / 1024 / 1024).toFixed(2)} MB`)
+    console.log(`  Savings: ${percentSavings}%`)
+
+    // Cleanup the built image
+    try {
+      execSync(`docker rmi -f ${uniqueImageName}`, { stdio: "pipe" })
+    } catch {
+      // ignore
+    }
+
+    return {
+      success: true,
+      originalSize,
+      optimizedSize,
+      sizeSavings,
+      percentSavings: parseFloat(percentSavings as string),
+      dockerfile: optimizedDockerfile,
+      optimizedBuffer: optimizedTarBuffer,
+    }
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : "Unknown error"
+    console.error("[OPTIMIZER] Error:", errorMessage)
+    return {
+      success: false,
+      originalSize: fileBuffer.length,
+      optimizedSize: 0,
+      sizeSavings: 0,
+      percentSavings: 0,
+      dockerfile: "",
+      optimizedBuffer: null,
+      error: errorMessage,
+    }
+  } finally {
+    try {
+      if (existsSync(tempDir)) {
+        rmSync(tempDir, { recursive: true, force: true })
+      }
+    } catch {
+      // ignore
+    }
+  }
+}
+
+/**
+ * Generates optimized Dockerfile based on detected image type
+ * First tries to detect from image name, then from Dockerfile content
+ */
+function generateOptimizedDockerfile(
+  originalDockerfile: string,
+  originalImageName: string,
+  optimizations: any = {},
+): string {
+  let dockerfile = ""
+  let imageType = ""
+  
+  // PRIORITY 1: Detect from image name (most reliable for pulled images)
+  const imageName = originalImageName.toLowerCase()
+  
+  if (imageName.includes("python:3.9")) {
+    imageType = "python39"
+    dockerfile = `FROM python:3.9-slim
+
+WORKDIR /app
+
+RUN apt-get update && \\
+    apt-get install -y --no-install-recommends \\
+      ca-certificates \\
+      curl \\
+      wget \\
+      && \\
+    apt-get clean && \\
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/* && \\
+    find /usr/share/doc -type f -delete && \\
+    find /usr/share/man -type f -delete && \\
+    find /usr/share/locale -type f -delete && \\
+    rm -rf /tmp/* /var/tmp/* /var/log/*
+
+CMD ["python3"]
+`
+  } else if (imageName.includes("python:3.10")) {
+    imageType = "python310"
+    dockerfile = `FROM python:3.10-slim
+
+WORKDIR /app
+
+RUN apt-get update && \\
+    apt-get install -y --no-install-recommends \\
+      ca-certificates \\
+      curl \\
+      wget \\
+      && \\
+    apt-get clean && \\
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/* && \\
+    find /usr/share/doc -type f -delete && \\
+    find /usr/share/man -type f -delete && \\
+    find /usr/share/locale -type f -delete && \\
+    rm -rf /tmp/* /var/tmp/* /var/log/*
+
+CMD ["python3"]
+`
+  } else if (imageName.includes("python:3.11")) {
+    imageType = "python311"
+    dockerfile = `FROM python:3.11-slim
+
+WORKDIR /app
+
+RUN apt-get update && \\
+    apt-get install -y --no-install-recommends \\
+      ca-certificates \\
+      curl \\
+      wget \\
+      && \\
+    apt-get clean && \\
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/* && \\
+    find /usr/share/doc -type f -delete && \\
+    find /usr/share/man -type f -delete && \\
+    find /usr/share/locale -type f -delete && \\
+    rm -rf /tmp/* /var/tmp/* /var/log/*
+
+CMD ["python3"]
+`
+  } else if (imageName.includes("python:3.12")) {
+    imageType = "python312"
+    dockerfile = `FROM python:3.12-slim
+
+WORKDIR /app
+
+RUN apt-get update && \\
+    apt-get install -y --no-install-recommends \\
+      ca-certificates \\
+      curl \\
+      wget \\
+      && \\
+    apt-get clean && \\
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/* && \\
+    find /usr/share/doc -type f -delete && \\
+    find /usr/share/man -type f -delete && \\
+    find /usr/share/locale -type f -delete && \\
+    rm -rf /tmp/* /var/tmp/* /var/log/*
+
+CMD ["python3"]
+`
+  } else if (imageName.includes("python")) {
+    imageType = "python_generic"
+    dockerfile = `FROM python:3.12-slim
+
+WORKDIR /app
+
+RUN apt-get update && \\
+    apt-get install -y --no-install-recommends \\
+      ca-certificates \\
+      curl \\
+      wget \\
+      && \\
+    apt-get clean && \\
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/* && \\
+    find /usr/share/doc -type f -delete && \\
+    find /usr/share/man -type f -delete && \\
+    find /usr/share/locale -type f -delete && \\
+    rm -rf /tmp/* /var/tmp/* /var/log/*
+
+CMD ["python3"]
+`
+  } else if (imageName.includes("node:18")) {
+    imageType = "node18"
+    dockerfile = `FROM node:18-slim
+
+WORKDIR /app
+
+RUN apt-get update && \\
+    apt-get install -y --no-install-recommends \\
+      ca-certificates \\
+      curl \\
+      git \\
+      && \\
+    apt-get clean && \\
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/* && \\
+    npm cache clean --force && \\
+    find /usr/share/doc -type f -delete && \\
+    find /usr/share/man -type f -delete && \\
+    find /usr/share/locale -type f -delete && \\
+    rm -rf /tmp/* /var/tmp/* /var/log/*
+
+CMD ["node"]
+`
+  } else if (imageName.includes("node:20")) {
+    imageType = "node20"
+    dockerfile = `FROM node:20-slim
+
+WORKDIR /app
+
+RUN apt-get update && \\
+    apt-get install -y --no-install-recommends \\
+      ca-certificates \\
+      curl \\
+      git \\
+      && \\
+    apt-get clean && \\
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/* && \\
+    npm cache clean --force && \\
+    find /usr/share/doc -type f -delete && \\
+    find /usr/share/man -type f -delete && \\
+    find /usr/share/locale -type f -delete && \\
+    rm -rf /tmp/* /var/tmp/* /var/log/*
+
+CMD ["node"]
+`
+  } else if (imageName.includes("node")) {
+    imageType = "node_generic"
+    dockerfile = `FROM node:20-slim
+
+WORKDIR /app
+
+RUN apt-get update && \\
+    apt-get install -y --no-install-recommends \\
+      ca-certificates \\
+      curl \\
+      git \\
+      && \\
+    apt-get clean && \\
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/* && \\
+    npm cache clean --force && \\
+    find /usr/share/doc -type f -delete && \\
+    find /usr/share/man -type f -delete && \\
+    find /usr/share/locale -type f -delete && \\
+    rm -rf /tmp/* /var/tmp/* /var/log/*
+
+CMD ["node"]
+`
+  } else if (imageName.includes("nginx")) {
+    imageType = "nginx"
+    dockerfile = `FROM nginx:latest
+
+RUN apt-get update && \\
+    apt-get install -y --no-install-recommends \\
+      ca-certificates \\
+      curl \\
+      && \\
+    apt-get clean && \\
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/* && \\
+    find /usr/share/doc -type f -delete && \\
+    find /usr/share/man -type f -delete && \\
+    find /usr/share/locale -type f -delete && \\
+    rm -rf /tmp/* /var/tmp/* /var/log/*
+
+EXPOSE 80 443
+
+CMD ["nginx", "-g", "daemon off;"]
+`
+  } else if (imageName.includes("ubuntu")) {
+    imageType = "ubuntu"
+    dockerfile = `FROM ubuntu:24.04
+
+WORKDIR /app
+
+RUN apt-get update && \\
+    apt-get install -y --no-install-recommends \\
+      ca-certificates \\
+      curl \\
+      wget \\
+      bash \\
+      git \\
+      && \\
+    apt-get clean && \\
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/* && \\
+    find /usr/share/doc -type f -delete && \\
+    find /usr/share/man -type f -delete && \\
+    find /usr/share/locale -type f -delete && \\
+    rm -rf /tmp/* /var/tmp/* /var/log/*
+
+CMD ["/bin/bash"]
+`
+  } else if (imageName.includes("debian")) {
+    imageType = "debian"
+    dockerfile = `FROM debian:bookworm-slim
+
+WORKDIR /app
+
+RUN apt-get update && \\
+    apt-get install -y --no-install-recommends \\
+      ca-certificates \\
+      curl \\
+      wget \\
+      bash \\
+      git \\
+      && \\
+    apt-get clean && \\
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/* && \\
+    find /usr/share/doc -type f -delete && \\
+    find /usr/share/man -type f -delete && \\
+    find /usr/share/locale -type f -delete && \\
+    rm -rf /tmp/* /var/tmp/* /var/log/*
+
+CMD ["/bin/bash"]
+`
+  } else if (imageName.includes("alpine")) {
+    imageType = "alpine"
+    dockerfile = `FROM alpine:latest
+
+WORKDIR /app
+
+RUN apk add --no-cache \\
+      ca-certificates \\
+      curl \\
+      wget \\
+      bash \\
+      && \\
+    rm -rf /var/cache/apk/* /tmp/* /var/tmp/*
+
+CMD ["/bin/sh"]
+`
+  } else {
+    // PRIORITY 2: Try to detect from Dockerfile content as fallback
+    const baseImageMatch = originalDockerfile.match(/FROM\s+(\S+)/i)
+    const originalBase = baseImageMatch ? baseImageMatch[1] : ""
+
+    if (originalBase.includes("python")) {
+      imageType = "python_fallback"
+      dockerfile = `FROM python:3.12-slim
+
+WORKDIR /app
+
+RUN apt-get update && \\
+    apt-get install -y --no-install-recommends \\
+      ca-certificates \\
+      curl \\
+      wget \\
+      && \\
+    apt-get clean && \\
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/* && \\
+    find /usr/share/doc -type f -delete && \\
+    find /usr/share/man -type f -delete && \\
+    find /usr/share/locale -type f -delete && \\
+    rm -rf /tmp/* /var/tmp/* /var/log/*
+
+CMD ["python3"]
+`
+    } else if (originalBase.includes("node")) {
+      imageType = "node_fallback"
+      dockerfile = `FROM node:20-slim
+
+WORKDIR /app
+
+RUN apt-get update && \\
+    apt-get install -y --no-install-recommends \\
+      ca-certificates \\
+      curl \\
+      git \\
+      && \\
+    apt-get clean && \\
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/* && \\
+    npm cache clean --force && \\
+    find /usr/share/doc -type f -delete && \\
+    find /usr/share/man -type f -delete && \\
+    find /usr/share/locale -type f -delete && \\
+    rm -rf /tmp/* /var/tmp/* /var/log/*
+
+CMD ["node"]
+`
+    } else if (originalBase.includes("nginx")) {
+      imageType = "nginx_fallback"
+      dockerfile = `FROM nginx:latest
+
+RUN apt-get update && \\
+    apt-get install -y --no-install-recommends \\
+      ca-certificates \\
+      curl \\
+      && \\
+    apt-get clean && \\
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/* && \\
+    find /usr/share/doc -type f -delete && \\
+    find /usr/share/man -type f -delete && \\
+    find /usr/share/locale -type f -delete && \\
+    rm -rf /tmp/* /var/tmp/* /var/log/*
+
+EXPOSE 80 443
+
+CMD ["nginx", "-g", "daemon off;"]
+`
+    } else if (originalBase.includes("ubuntu")) {
+      imageType = "ubuntu_fallback"
+      dockerfile = `FROM ubuntu:24.04
+
+WORKDIR /app
+
+RUN apt-get update && \\
+    apt-get install -y --no-install-recommends \\
+      ca-certificates \\
+      curl \\
+      wget \\
+      bash \\
+      git \\
+      && \\
+    apt-get clean && \\
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/* && \\
+    find /usr/share/doc -type f -delete && \\
+    find /usr/share/man -type f -delete && \\
+    find /usr/share/locale -type f -delete && \\
+    rm -rf /tmp/* /var/tmp/* /var/log/*
+
+CMD ["/bin/bash"]
+`
+    } else if (originalBase.includes("debian")) {
+      imageType = "debian_fallback"
+      dockerfile = `FROM debian:bookworm-slim
+
+WORKDIR /app
+
+RUN apt-get update && \\
+    apt-get install -y --no-install-recommends \\
+      ca-certificates \\
+      curl \\
+      wget \\
+      bash \\
+      git \\
+      && \\
+    apt-get clean && \\
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/* && \\
+    find /usr/share/doc -type f -delete && \\
+    find /usr/share/man -type f -delete && \\
+    find /usr/share/locale -type f -delete && \\
+    rm -rf /tmp/* /var/tmp/* /var/log/*
+
+CMD ["/bin/bash"]
+`
+    } else if (originalBase.includes("alpine")) {
+      imageType = "alpine"
+      dockerfile = `FROM alpine:latest
+
+WORKDIR /app
+
+RUN apk add --no-cache \\
+      ca-certificates \\
+      curl \\
+      wget \\
+      bash \\
+      && \\
+    rm -rf /var/cache/apk/* /tmp/* /var/tmp/*
+
+CMD ["/bin/sh"]
+`
+    } else {
+      // Ultimate fallback: ubuntu since it's common
+      imageType = "unknown_default_ubuntu"
+      dockerfile = `FROM ubuntu:24.04
+
+WORKDIR /app
+
+RUN apt-get update && \\
+    apt-get install -y --no-install-recommends \\
+      ca-certificates \\
+      curl \\
+      wget \\
+      bash \\
+      && \\
+    apt-get clean && \\
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/* && \\
+    find /usr/share/doc -type f -delete && \\
+    find /usr/share/man -type f -delete && \\
+    find /usr/share/locale -type f -delete && \\
+    rm -rf /tmp/* /var/tmp/* /var/log/*
+
+CMD ["/bin/bash"]
+`
+    }
+  }
+
+  console.log(`[OPTIMIZER] Image type detected: ${imageType}`)
+  return dockerfile
+}
+
+/**
+ * Builds optimized Docker image from Dockerfile
+ */
+async function buildOptimizedImage(
+  tempDir: string,
+  dockerfile: string,
+  imageName: string,
+): Promise<boolean> {
+  try {
+    const dockerfilePath = path.join(tempDir, "Dockerfile.optimized")
+    writeFileSync(dockerfilePath, dockerfile)
+
+    const buildCommand = `docker build --no-cache -t ${imageName} -f "${dockerfilePath.replace(
+      /\\/g,
+      "/",
+    )}" "${tempDir.replace(/\\/g, "/")}"`
+
+    console.log("[OPTIMIZER] Building image...")
+    execSync(buildCommand, { stdio: "pipe", timeout: 600000 })
+
+    console.log(`[OPTIMIZER] Built optimized image: ${imageName}`)
+    return true
+  } catch (error) {
+    console.error("[OPTIMIZER] Build failed:", error)
+    return false
+  }
+}
+
+/**
+ * Extracts Dockerfile from tar archive
+ */
+async function extractDockerfileFromTar(
+  fileBuffer: Buffer,
+  tempDir: string,
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let dockerfile = ""
+    const extract = tar.extract()
+    const readable = Readable.from(Buffer.from(fileBuffer))
+
+    extract.on("entry", (header: any, stream: any, next: () => void) => {
+      let data = Buffer.alloc(0)
+
+      stream.on("data", (chunk: Buffer) => {
+        data = Buffer.concat([data, chunk])
+      })
+
+      stream.on("end", () => {
+        if (
+          header.name === "Dockerfile" ||
+          header.name.endsWith("/Dockerfile")
+        ) {
+          dockerfile = data.toString()
+        }
+        next()
+      })
+
+      stream.resume()
+    })
+
+    extract.on("finish", () => {
+      if (!dockerfile) {
+        dockerfile = "FROM alpine:latest"
+      }
+      resolve(dockerfile)
+    })
+
+    extract.on("error", reject)
+    readable.pipe(extract)
+  })
+}
+
+/**
+ * Saves Docker image to tar file
+ */
+async function saveImageToTar(
+  imageName: string,
+  tarPath: string,
+): Promise<void> {
+  try {
+    const normalizedPath = tarPath.replace(/\\/g, "/")
+    console.log(`[OPTIMIZER] Saving image to tar...`)
+    execSync(`docker save -o "${normalizedPath}" ${imageName}`, {
+      stdio: "pipe",
+      timeout: 300000,
+    })
+    console.log(`[OPTIMIZER] Saved optimized image to tar`)
+  } catch (error) {
+    throw new Error(
+      `Failed to save image: ${error instanceof Error ? error.message : error}`,
+    )
+  }
+}
