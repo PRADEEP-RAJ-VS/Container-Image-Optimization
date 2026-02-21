@@ -43,13 +43,13 @@ export default function FindingsTable({ findings }: FindingsTableProps) {
       <CardHeader>
         <CardTitle className="text-white flex items-center gap-2">
           <AlertTriangle className="w-5 h-5 text-yellow-500" />
-          Vulnerability Findings {findings.length > 0 && `(${findings.length})`}
+          Top Vulnerability Findings {findings.length > 0 && `(Showing ${Math.min(50, findings.length)} of ${findings.length})`}
         </CardTitle>
       </CardHeader>
       <CardContent>
         <div className="space-y-3 max-h-96 overflow-y-auto">
           {findings.length > 0 ? (
-            findings.slice(0, 20).map((finding, idx) => (
+            findings.slice(0, 50).map((finding, idx) => (
               <div
                 key={idx}
                 className={`border rounded-lg p-4 cursor-pointer transition-all ${getSeverityColor(finding.severity)}`}
