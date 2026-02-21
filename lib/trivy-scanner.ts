@@ -1,6 +1,7 @@
 import { execSync } from "child_process"
 import { writeFileSync, unlinkSync, existsSync } from "fs"
 import path from "path"
+import os from "os"
 
 export interface VulnerabilityFinding {
   id: string
@@ -26,7 +27,7 @@ export interface TrivyResult {
 }
 
 export async function scanWithTrivy(fileBuffer: Buffer, imageName = "analysis-image"): Promise<TrivyResult> {
-  const tempDir = path.join("/tmp", `docker-scan-${Date.now()}`)
+  const tempDir = path.join(os.tmpdir(), `docker-scan-${Date.now()}`)
   const tarPath = path.join(tempDir, `${imageName}.tar`)
   const resultPath = path.join(tempDir, "trivy-results.json")
 
@@ -118,6 +119,14 @@ function parseTrivyResults(jsonData: string, trivyVersion = ""): TrivyResult {
                 break
             }
 
+            // Try multiple CVSS score sources with fallbacks
+            const cvssScore = 
+              vuln.CVSS?.nvd?.V3Score || 
+              vuln.CVSS?.nvd?.V2Score || 
+              vuln.CVSS?.redhat?.V3Score ||
+              vuln.CVSS?.redhat?.V2Score ||
+              0
+
             findings.push({
               id: vuln.VulnerabilityID,
               severity,
@@ -125,7 +134,7 @@ function parseTrivyResults(jsonData: string, trivyVersion = ""): TrivyResult {
               version: vuln.InstalledVersion,
               fixedVersion: vuln.FixedVersion,
               description: vuln.Title,
-              cvssScore: vuln.CVSS?.nvd?.V3Score || 0,
+              cvssScore,
             })
           })
         }
@@ -135,6 +144,20 @@ function parseTrivyResults(jsonData: string, trivyVersion = ""): TrivyResult {
     const total = critical + high + medium + low
     const byPackage = aggregateByPackage(findings)
 
+    // Create a balanced sample of findings across all severity levels
+    const criticalFindings = findings.filter(f => f.severity === "CRITICAL")
+    const highFindings = findings.filter(f => f.severity === "HIGH")
+    const mediumFindings = findings.filter(f => f.severity === "MEDIUM")
+    const lowFindings = findings.filter(f => f.severity === "LOW")
+
+    // Take proportional samples: all CRITICAL, 20 HIGH, 15 MEDIUM, 15 LOW
+    const balancedFindings = [
+      ...criticalFindings,
+      ...highFindings.slice(0, 20),
+      ...mediumFindings.slice(0, 15),
+      ...lowFindings.slice(0, 15),
+    ].slice(0, 100) // Cap at 100 total
+
     return {
       critical,
       high,
@@ -142,7 +165,7 @@ function parseTrivyResults(jsonData: string, trivyVersion = ""): TrivyResult {
       low,
       total,
       byPackage,
-      findings: findings.slice(0, 100), // Limit to top 100 findings
+      findings: balancedFindings,
       scanned_at: new Date().toISOString(),
       isMockData: false,
       scannerVersion: trivyVersion,

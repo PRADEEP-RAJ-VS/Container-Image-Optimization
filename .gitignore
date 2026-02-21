@@ -113,7 +113,7 @@ __pycache__/
 *.pyd
 
 # GitHub workflows and config
-.github/
+# .github/ is intentionally tracked for CI/CD workflows
 
 # Specify tool
 .specify/
