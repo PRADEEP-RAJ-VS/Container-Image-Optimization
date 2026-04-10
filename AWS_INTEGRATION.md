@@ -232,3 +232,53 @@ PRs welcome! Please test with both local and AWS deployments.
 ## License
 
 MIT
+
+## GitHub Actions CI/CD
+
+This repository includes a staged GitHub Actions pipeline in `.github/workflows/ci-cd.yml`.
+
+### Pipeline Stages
+
+1. **Quality Gates**
+   - Installs dependencies with pnpm
+   - Runs ESLint (advisory)
+   - Runs TypeScript check (`tsc --noEmit`) (advisory)
+   - Builds the Next.js app (required)
+
+2. **Docker Build Validation**
+   - Builds the production Docker image from `Dockerfile`
+   - Uses GitHub Actions cache for faster rebuilds
+
+3. **Push Image To ECR** (main branch pushes only)
+   - Logs in to ECR
+   - Pushes two tags:
+     - `:<git-sha>`
+     - `:latest`
+
+4. **Deploy To ECS** (optional)
+   - Runs only when ECS secrets are configured
+   - Forces a rolling deployment on your ECS service
+
+### Required GitHub Secrets
+
+Set these in your GitHub repository settings:
+
+- `AWS_ACCESS_KEY_ID`
+- `AWS_SECRET_ACCESS_KEY`
+- `AWS_REGION`
+- `ECS_CLUSTER_NAME` (optional; required only for ECS deploy stage)
+- `ECS_SERVICE_NAME` (optional; required only for ECS deploy stage)
+
+### Optional GitHub Variables
+
+- `NEXT_PUBLIC_APP_URL` (defaults to `http://localhost:3000` in CI build)
+
+### Trigger Rules
+
+- Push to `develop`:
+  - Quality + Docker validation
+- Pull request to `main`/`develop`:
+  - Quality + Docker validation
+- Push to `main`:
+  - Quality + Docker validation + ECR push
+  - ECS deploy if ECS secrets are present

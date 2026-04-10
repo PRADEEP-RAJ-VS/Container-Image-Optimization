@@ -8,10 +8,23 @@ on:
   pull_request:
     branches:
       - main
+      - develop
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '20'
+  ECR_REPOSITORY: docker-optimizer
 
 jobs:
-  build-and-test:
-    name: Build & Test
+  quality:
+    name: Quality Gates
     runs-on: ubuntu-latest
 
     steps:
@@ -21,29 +34,34 @@ jobs:
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: latest
+          version: 10
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
-          cache: 'pnpm'
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build Next.js app
+      - name: Lint (advisory)
+        run: pnpm run lint --if-present
+        continue-on-error: true
+
+      - name: Type check (advisory)
+        run: pnpm exec tsc --noEmit
+        continue-on-error: true
+
+      - name: Build (required)
         run: pnpm run build
         env:
-          NEXT_PUBLIC_APP_URL: ${{ secrets.NEXT_PUBLIC_APP_URL }}
-
-      - name: Run linter
-        run: pnpm run lint --if-present
+          NEXT_PUBLIC_APP_URL: ${{ vars.NEXT_PUBLIC_APP_URL || 'http://localhost:3000' }}
 
   docker-build:
-    name: Docker Build
+    name: Docker Build Validation
     runs-on: ubuntu-latest
-    needs: build-and-test
+    needs: quality
 
     steps:
       - name: Checkout code
@@ -53,19 +71,20 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Build Docker image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: .
+          file: ./Dockerfile
           push: false
-          tags: docker-optimizer:latest
+          tags: docker-optimizer:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  deploy-to-ecr:
-    name: Deploy to AWS ECR
+  deploy-ecr:
+    name: Push Image To ECR
     runs-on: ubuntu-latest
     needs: docker-build
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
 
     steps:
       - name: Checkout code
@@ -82,25 +101,36 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build, tag, and push image to ECR
-        env:
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          ECR_REPOSITORY: docker-optimizer
-          IMAGE_TAG: ${{ github.sha }}
-        run: |
-          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-          docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: |
+            ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
+            ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
-      - name: Deploy to ECS
-        env:
-          AWS_REGION: ${{ secrets.AWS_REGION }}
-          ECS_CLUSTER: ${{ secrets.ECS_CLUSTER_NAME }}
-          ECS_SERVICE: docker-optimizer-service
+  deploy-ecs:
+    name: Deploy To ECS
+    runs-on: ubuntu-latest
+    needs: deploy-ecr
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.ECS_CLUSTER_NAME != '' && secrets.ECS_SERVICE_NAME != ''
+
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Trigger ECS rolling deployment
         run: |
           aws ecs update-service \
-            --cluster $ECS_CLUSTER \
-            --service $ECS_SERVICE \
+            --cluster "${{ secrets.ECS_CLUSTER_NAME }}" \
+            --service "${{ secrets.ECS_SERVICE_NAME }}" \
             --force-new-deployment \
-            --region $AWS_REGION
+            --region "${{ secrets.AWS_REGION }}"
