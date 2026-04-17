@@ -57,7 +57,7 @@ jobs:
       - name: Build (required)
         run: pnpm run build
         env:
-          NEXT_PUBLIC_APP_URL: ${{ vars.NEXT_PUBLIC_APP_URL || 'http://localhost:3000' }}
+          NEXT_PUBLIC_APP_URL: http://localhost:3000
           NEXT_TELEMETRY_DISABLED: '1'
 
   docker-build:
@@ -92,15 +92,42 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Precheck AWS deploy configuration
+        id: precheck
+        env:
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_ROLE_TO_ASSUME: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ -n "${AWS_ROLE_TO_ASSUME:-}" && -n "${AWS_REGION:-}" ]]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "mode=oidc" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [[ -n "${AWS_ACCESS_KEY_ID:-}" && -n "${AWS_SECRET_ACCESS_KEY:-}" && -n "${AWS_REGION:-}" ]]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "mode=keys" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "enabled=false" >> "$GITHUB_OUTPUT"
+          echo "mode=none" >> "$GITHUB_OUTPUT"
+          echo "AWS deploy secrets not configured; skipping ECR push."
+
       - name: Configure AWS credentials (OIDC)
-        if: ${{ secrets.AWS_ROLE_TO_ASSUME != '' }}
+        if: steps.precheck.outputs.mode == 'oidc'
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
           aws-region: ${{ secrets.AWS_REGION }}
 
       - name: Configure AWS credentials (access keys)
-        if: ${{ secrets.AWS_ROLE_TO_ASSUME == '' }}
+        if: steps.precheck.outputs.mode == 'keys'
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -108,10 +135,12 @@ jobs:
           aws-region: ${{ secrets.AWS_REGION }}
 
       - name: Login to Amazon ECR
+        if: steps.precheck.outputs.enabled == 'true'
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
       - name: Build and push Docker image
+        if: steps.precheck.outputs.enabled == 'true'
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -127,21 +156,57 @@ jobs:
     name: Deploy To ECS
     runs-on: ubuntu-latest
     needs: deploy-ecr
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && secrets.ECS_CLUSTER_NAME != '' && secrets.ECS_SERVICE_NAME != ''
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Precheck AWS ECS deploy configuration
+        id: precheck
+        env:
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_ROLE_TO_ASSUME: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          ECS_CLUSTER_NAME: ${{ secrets.ECS_CLUSTER_NAME }}
+          ECS_SERVICE_NAME: ${{ secrets.ECS_SERVICE_NAME }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${ECS_CLUSTER_NAME:-}" || -z "${ECS_SERVICE_NAME:-}" ]]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "mode=none" >> "$GITHUB_OUTPUT"
+            echo "ECS_CLUSTER_NAME/ECS_SERVICE_NAME not configured; skipping ECS deploy."
+            exit 0
+          fi
+
+          if [[ -n "${AWS_ROLE_TO_ASSUME:-}" && -n "${AWS_REGION:-}" ]]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "mode=oidc" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [[ -n "${AWS_ACCESS_KEY_ID:-}" && -n "${AWS_SECRET_ACCESS_KEY:-}" && -n "${AWS_REGION:-}" ]]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+            echo "mode=keys" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "enabled=false" >> "$GITHUB_OUTPUT"
+          echo "mode=none" >> "$GITHUB_OUTPUT"
+          echo "AWS deploy secrets not configured; skipping ECS deploy."
+
       - name: Configure AWS credentials (OIDC)
-        if: ${{ secrets.AWS_ROLE_TO_ASSUME != '' }}
+        if: steps.precheck.outputs.mode == 'oidc'
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
           aws-region: ${{ secrets.AWS_REGION }}
 
       - name: Configure AWS credentials (access keys)
-        if: ${{ secrets.AWS_ROLE_TO_ASSUME == '' }}
+        if: steps.precheck.outputs.mode == 'keys'
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -149,10 +214,12 @@ jobs:
           aws-region: ${{ secrets.AWS_REGION }}
 
       - name: Login to Amazon ECR
+        if: steps.precheck.outputs.enabled == 'true'
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
       - name: Register new task definition revision (image update)
+        if: steps.precheck.outputs.enabled == 'true'
         env:
           ECS_CLUSTER_NAME: ${{ secrets.ECS_CLUSTER_NAME }}
           ECS_SERVICE_NAME: ${{ secrets.ECS_SERVICE_NAME }}
@@ -215,6 +282,7 @@ jobs:
           echo "NEW_TASK_DEF_ARN=${NEW_TASK_DEF_ARN}" >> "$GITHUB_ENV"
 
       - name: Update ECS service to new task definition
+        if: steps.precheck.outputs.enabled == 'true'
         env:
           ECS_CLUSTER_NAME: ${{ secrets.ECS_CLUSTER_NAME }}
           ECS_SERVICE_NAME: ${{ secrets.ECS_SERVICE_NAME }}
