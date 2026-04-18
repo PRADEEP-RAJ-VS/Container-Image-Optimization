@@ -28,7 +28,7 @@ export default function AnalysisResults({ analysis }: AnalysisResultsProps) {
   const mediumCount = analysis.vulnerabilities?.medium || 0
 
   const scanTime = analysis.scanMetadata?.scannedAt ? new Date(analysis.scanMetadata.scannedAt).toLocaleString() : "N/A"
-  const sessionId = analysis.scanMetadata?.sessionId
+  const sessionId = analysis.scanMetadata?.sessionId || analysis._sessionId
   const imageName = analysis.scanMetadata?.imageFile || "docker-image"
   const isMockData = analysis.vulnerabilities?.isMockData
 

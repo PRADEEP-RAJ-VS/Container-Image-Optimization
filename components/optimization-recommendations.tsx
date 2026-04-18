@@ -33,7 +33,10 @@ export default function OptimizationRecommendations({ analysis }: OptimizationRe
   const handleDownloadOptimizedImage = async () => {
     setIsDownloading(true)
     try {
-      const sessionId = scanMetadata.sessionId
+      const sessionId =
+        scanMetadata.sessionId ||
+        sessionStorage.getItem("optimizationSessionId") ||
+        analysis._sessionId
 
       if (!sessionId) {
         throw new Error("Session expired. Please re-upload your image.")
