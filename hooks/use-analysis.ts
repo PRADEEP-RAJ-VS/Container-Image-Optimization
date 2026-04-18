@@ -42,6 +42,7 @@ export function useAnalysis() {
   const analyzeImage = useCallback(async (input: File | string): Promise<boolean> => {
     setIsLoading(true)
     setError(null)
+    sessionStorage.removeItem("optimizationSessionId")
 
     try {
       const formData = new FormData()

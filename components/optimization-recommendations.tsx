@@ -35,8 +35,8 @@ export default function OptimizationRecommendations({ analysis }: OptimizationRe
     try {
       const sessionId =
         scanMetadata.sessionId ||
-        sessionStorage.getItem("optimizationSessionId") ||
-        analysis._sessionId
+        analysis._sessionId ||
+        sessionStorage.getItem("optimizationSessionId")
 
       if (!sessionId) {
         throw new Error("Session expired. Please re-upload your image.")
