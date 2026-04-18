@@ -7,6 +7,14 @@ import { execSync } from "child_process"
 import * as fs from "fs"
 import * as path from "path"
 
+const PROTECTED_PATH_PREFIXES = ["/tmp/docker-optimizer-sessions"]
+
+function isProtectedPath(targetPath: string): boolean {
+  return PROTECTED_PATH_PREFIXES.some(
+    (prefix) => targetPath === prefix || targetPath.startsWith(`${prefix}/`),
+  )
+}
+
 interface RuntimeOptimizationOptions {
   interval?: number // ms between cleanup cycles (default: 5 minutes)
   aggressive?: boolean // remove more files at the cost of potential functionality
@@ -188,6 +196,10 @@ function cleanDocs(dryRun: boolean): number {
  * Clean a directory, optionally preserving recent files
  */
 function cleanDirectory(dirPath: string, dryRun: boolean, maxAgeMiliseconds?: number): number {
+  if (isProtectedPath(dirPath)) {
+    return 0
+  }
+
   if (!fs.existsSync(dirPath)) {
     return 0
   }
@@ -203,6 +215,11 @@ function cleanDirectory(dirPath: string, dryRun: boolean, maxAgeMiliseconds?: nu
 
       try {
         const stat = fs.statSync(filePath)
+
+        if (isProtectedPath(filePath)) {
+          continue
+        }
+
         const age = now - stat.mtimeMs
 
         // Skip if file is too recent
@@ -233,6 +250,10 @@ function cleanDirectory(dirPath: string, dryRun: boolean, maxAgeMiliseconds?: nu
  * Recursively remove a directory
  */
 function removeRecursive(dirPath: string, dryRun: boolean): number {
+  if (isProtectedPath(dirPath)) {
+    return 0
+  }
+
   if (!fs.existsSync(dirPath)) {
     return 0
   }

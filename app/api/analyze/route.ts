@@ -11,9 +11,13 @@ import { proxyToBackend } from "@/lib/api-proxy"
 const SESSION_DIR = join(tmpdir(), "docker-optimizer-sessions")
 
 // Ensure session directory exists
-if (!existsSync(SESSION_DIR)) {
-  mkdirSync(SESSION_DIR, { recursive: true })
+function ensureSessionDirExists() {
+  if (!existsSync(SESSION_DIR)) {
+    mkdirSync(SESSION_DIR, { recursive: true })
+  }
 }
+
+ensureSessionDirExists()
 
 // Cleanup old session files on startup and periodically
 function cleanupOldSessions() {
@@ -102,7 +106,7 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    let imageAnalysis
+    let imageAnalysis: any
     try {
       imageAnalysis = await analyzeDockerImage(fileBuffer)
     } catch (analyzeError) {
@@ -123,10 +127,18 @@ export async function POST(request: NextRequest) {
     const sessionFilePath = join(SESSION_DIR, `${sessionId}.tar`)
     
     try {
+      ensureSessionDirExists()
       writeFileSync(sessionFilePath, fileBuffer)
       console.log("[ANALYZE] Stored session buffer:", sessionId, "Size:", fileBuffer.length)
     } catch (error) {
       console.error("[ANALYZE] Failed to store session buffer:", error)
+      return NextResponse.json(
+        {
+          error: "Failed to persist session data for optimization. Please retry analysis.",
+          success: false,
+        },
+        { status: 500 },
+      )
     }
 
     const combinedAnalysis = {
@@ -171,6 +183,7 @@ export async function POST(request: NextRequest) {
 // Export for use by other API routes
 export function getUploadedBuffer(sessionId: string): Buffer | null {
   try {
+    ensureSessionDirExists()
     const sessionFilePath = join(SESSION_DIR, `${sessionId}.tar`)
     
     if (!existsSync(sessionFilePath)) {

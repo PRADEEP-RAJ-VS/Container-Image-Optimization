@@ -46,19 +46,30 @@ export function useAnalysis() {
 
     try {
       const formData = new FormData()
+      const directBackendBaseUrl = process.env.NEXT_PUBLIC_BACKEND_API_BASE_URL?.replace(/\/$/, "")
+      const isFileUpload = input instanceof File
 
-      if (input instanceof File) {
+      if (isFileUpload) {
         formData.append('file', input)
       } else {
         formData.append('imageName', input)
       }
 
-      const response = await fetch('/api/analyze', {
+      // Large multipart uploads can fail on Vercel before proxying, so send file uploads directly to EC2 when configured.
+      const analyzeEndpoint = isFileUpload && directBackendBaseUrl
+        ? `${directBackendBaseUrl}/api/analyze`
+        : '/api/analyze'
+
+      const response = await fetch(analyzeEndpoint, {
         method: 'POST',
         body: formData,
       })
 
       if (!response.ok) {
+        if (response.status === 413) {
+          throw new Error('Uploaded .tar is too large for the current upload path. Configure NEXT_PUBLIC_BACKEND_API_BASE_URL to upload directly to EC2.')
+        }
+
         let errorData
         let textContent = ''
         try {
