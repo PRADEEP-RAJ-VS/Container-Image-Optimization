@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { ECSDeployer } from "@/lib/ecs-deployer"
+import { proxyToBackend } from "@/lib/api-proxy"
 
 /**
  * GET /api/ecs/status
@@ -7,6 +8,11 @@ import { ECSDeployer } from "@/lib/ecs-deployer"
  */
 export async function GET(request: NextRequest) {
   try {
+    const proxiedResponse = await proxyToBackend(request, "/api/ecs/status")
+    if (proxiedResponse) {
+      return proxiedResponse
+    }
+
     const searchParams = request.nextUrl.searchParams
     const region = searchParams.get("region") || process.env.AWS_REGION || "us-east-1"
     const cluster = searchParams.get("cluster")

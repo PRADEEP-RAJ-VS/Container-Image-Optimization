@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { ECRManager } from "@/lib/ecr-client"
+import { proxyToBackend } from "@/lib/api-proxy"
 
 /**
  * GET /api/ecr/list
@@ -7,6 +8,11 @@ import { ECRManager } from "@/lib/ecr-client"
  */
 export async function GET(request: NextRequest) {
   try {
+    const proxiedResponse = await proxyToBackend(request, "/api/ecr/list")
+    if (proxiedResponse) {
+      return proxiedResponse
+    }
+
     const searchParams = request.nextUrl.searchParams
     const region = searchParams.get("region") || process.env.AWS_REGION || "us-east-1"
     const repositoryName = searchParams.get("repository")

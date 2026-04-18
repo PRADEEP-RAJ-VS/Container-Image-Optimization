@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import { ECSDeployer } from "@/lib/ecs-deployer"
+import { proxyToBackend } from "@/lib/api-proxy"
 
 /**
  * POST /api/ecs/deploy
@@ -7,6 +8,11 @@ import { ECSDeployer } from "@/lib/ecs-deployer"
  */
 export async function POST(request: NextRequest) {
   try {
+    const proxiedResponse = await proxyToBackend(request, "/api/ecs/deploy")
+    if (proxiedResponse) {
+      return proxiedResponse
+    }
+
     const body = await request.json()
     const {
       cluster,

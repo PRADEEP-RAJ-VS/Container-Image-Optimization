@@ -1,9 +1,15 @@
 import { startRuntimeOptimizer, getOptimizationStats } from '@/lib/runtime-optimizer'
-import { NextResponse } from 'next/server'
+import { NextResponse, type NextRequest } from 'next/server'
+import { proxyToBackend } from '@/lib/api-proxy'
 
 let optimizerStarted = false
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const proxiedResponse = await proxyToBackend(request, '/api/init')
+  if (proxiedResponse) {
+    return proxiedResponse
+  }
+
   if (!optimizerStarted && process.env.RUNTIME_OPTIMIZER_ENABLED === 'true') {
     optimizerStarted = true
     

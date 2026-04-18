@@ -5,6 +5,7 @@ import { pullAndConvertDockerImage, validateImageName } from "@/lib/docker-image
 import { writeFileSync, readFileSync, existsSync, mkdirSync, readdirSync, unlinkSync, statSync } from "fs"
 import { join } from "path"
 import { tmpdir } from "os"
+import { proxyToBackend } from "@/lib/api-proxy"
 
 // Use file-based storage instead of in-memory to survive server restarts
 const SESSION_DIR = join(tmpdir(), "docker-optimizer-sessions")
@@ -43,6 +44,11 @@ setInterval(cleanupOldSessions, 30 * 60 * 1000)
 
 export async function POST(request: NextRequest) {
   try {
+    const proxiedResponse = await proxyToBackend(request, "/api/analyze")
+    if (proxiedResponse) {
+      return proxiedResponse
+    }
+
     const formData = await request.formData()
     const file = formData.get('file') as File | null
     const imageName = formData.get('imageName') as string | null

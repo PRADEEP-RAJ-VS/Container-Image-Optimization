@@ -1,8 +1,14 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { getUploadedBuffer } from "@/app/api/analyze/route"
+import { proxyToBackend } from "@/lib/api-proxy"
 
 export async function POST(request: NextRequest) {
   try {
+    const proxiedResponse = await proxyToBackend(request, "/api/download-optimized")
+    if (proxiedResponse) {
+      return proxiedResponse
+    }
+
     const body = await request.json()
     const { optimizedSessionId, imageName } = body
 

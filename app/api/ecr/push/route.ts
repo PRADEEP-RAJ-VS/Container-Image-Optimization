@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import { ECRManager } from "@/lib/ecr-client"
 import { getUploadedBuffer } from "@/app/api/analyze/route"
+import { proxyToBackend } from "@/lib/api-proxy"
 
 /**
  * POST /api/ecr/push
@@ -8,6 +9,11 @@ import { getUploadedBuffer } from "@/app/api/analyze/route"
  */
 export async function POST(request: NextRequest) {
   try {
+    const proxiedResponse = await proxyToBackend(request, "/api/ecr/push")
+    if (proxiedResponse) {
+      return proxiedResponse
+    }
+
     const body = await request.json()
     const { sessionId, imageName, imageTag, repositoryName, region, imageType } = body
 

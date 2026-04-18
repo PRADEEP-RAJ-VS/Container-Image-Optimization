@@ -4,6 +4,7 @@ import { getUploadedBuffer } from "@/app/api/analyze/route"
 import { writeFileSync, existsSync, mkdirSync } from "fs"
 import { join } from "path"
 import { tmpdir } from "os"
+import { proxyToBackend } from "@/lib/api-proxy"
 
 const SESSION_DIR = join(tmpdir(), "docker-optimizer-sessions")
 
@@ -13,6 +14,11 @@ if (!existsSync(SESSION_DIR)) {
 
 export async function POST(request: NextRequest) {
   try {
+    const proxiedResponse = await proxyToBackend(request, "/api/optimize")
+    if (proxiedResponse) {
+      return proxiedResponse
+    }
+
     const body = await request.json()
     const { imageName, sessionId, optimizations } = body
 

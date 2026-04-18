@@ -1,9 +1,15 @@
 import { type NextRequest, NextResponse } from "next/server"
 import { optimizeDockerImage } from "@/lib/docker-image-optimizer"
 import { getUploadedBuffer } from "@/app/api/analyze/route"
+import { proxyToBackend } from "@/lib/api-proxy"
 
 export async function POST(request: NextRequest) {
   try {
+    const proxiedResponse = await proxyToBackend(request, "/api/download-image")
+    if (proxiedResponse) {
+      return proxiedResponse
+    }
+
     const body = await request.json()
     const { imageName, sessionId, optimizations } = body
 
