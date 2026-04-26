@@ -53,9 +53,7 @@ export function useAnalysis() {
         directBackendBaseUrl.startsWith("https://")
       )
 
-      if (isFileUpload) {
-        formData.append('file', input)
-      } else {
+      if (!isFileUpload) {
         formData.append('imageName', input)
       }
 
@@ -64,6 +62,50 @@ export function useAnalysis() {
         ? `${directBackendBaseUrl}/api/analyze`
         : '/api/analyze'
 
+      if (isFileUpload) {
+        const uploadFile = input as File
+
+        if (canUseDirectBackend) {
+          formData.append('file', uploadFile)
+        } else {
+          // Fallback for HTTPS Vercel -> HTTP backend setups: upload large files in small chunks.
+          const chunkSize = 2 * 1024 * 1024
+          const totalChunks = Math.ceil(uploadFile.size / chunkSize)
+          const uploadId = `upload-${Date.now()}-${Math.random().toString(36).slice(2)}`
+
+          for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex += 1) {
+            const start = chunkIndex * chunkSize
+            const end = Math.min(start + chunkSize, uploadFile.size)
+            const chunk = uploadFile.slice(start, end)
+
+            const chunkFormData = new FormData()
+            chunkFormData.append('uploadId', uploadId)
+            chunkFormData.append('fileName', uploadFile.name)
+            chunkFormData.append('chunkIndex', String(chunkIndex))
+            chunkFormData.append('totalChunks', String(totalChunks))
+            chunkFormData.append('chunk', chunk, `${uploadFile.name}.part.${chunkIndex}`)
+
+            const chunkResponse = await fetch('/api/upload/chunk', {
+              method: 'POST',
+              body: chunkFormData,
+            })
+
+            if (!chunkResponse.ok) {
+              let chunkErrorText = ''
+              try {
+                chunkErrorText = await chunkResponse.text()
+              } catch {
+                // no-op
+              }
+              throw new Error(`Chunk upload failed (${chunkResponse.status}): ${chunkErrorText.substring(0, 150) || 'Unknown error'}`)
+            }
+          }
+
+          formData.append('uploadedChunkId', uploadId)
+          formData.append('uploadedFileName', uploadFile.name)
+        }
+      }
+
       const response = await fetch(analyzeEndpoint, {
         method: 'POST',
         body: formData,
@@ -71,7 +113,7 @@ export function useAnalysis() {
 
       if (!response.ok) {
         if (response.status === 413) {
-          throw new Error('Uploaded .tar is too large for the current upload path. Configure NEXT_PUBLIC_BACKEND_API_BASE_URL to upload directly to EC2.')
+          throw new Error('Uploaded .tar is too large for this route. Retry in Docker Hub mode or use chunk upload fallback.')
         }
 
         let errorData

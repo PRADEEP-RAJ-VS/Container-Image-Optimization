@@ -9,6 +9,7 @@ import { proxyToBackend } from "@/lib/api-proxy"
 
 // Use file-based storage instead of in-memory to survive server restarts
 const SESSION_DIR = join(tmpdir(), "docker-optimizer-sessions")
+const CHUNK_DIR = join(tmpdir(), "docker-optimizer-upload-chunks")
 
 // Ensure session directory exists
 function ensureSessionDirExists() {
@@ -17,7 +18,14 @@ function ensureSessionDirExists() {
   }
 }
 
+function ensureChunkDirExists() {
+  if (!existsSync(CHUNK_DIR)) {
+    mkdirSync(CHUNK_DIR, { recursive: true })
+  }
+}
+
 ensureSessionDirExists()
+ensureChunkDirExists()
 
 // Cleanup old session files on startup and periodically
 function cleanupOldSessions() {
@@ -56,6 +64,8 @@ export async function POST(request: NextRequest) {
     const formData = await request.formData()
     const file = formData.get('file') as File | null
     const imageName = formData.get('imageName') as string | null
+    const uploadedChunkId = formData.get('uploadedChunkId') as string | null
+    const uploadedFileName = formData.get('uploadedFileName') as string | null
 
     let fileBuffer: Buffer
     let source: string
@@ -66,6 +76,28 @@ export async function POST(request: NextRequest) {
       source = 'local-upload'
       imageIdentifier = file.name
       console.log(`[DEBUG] File upload: ${file.name}, size: ${fileBuffer.length} bytes`)
+    } else if (uploadedChunkId) {
+      ensureChunkDirExists()
+      const chunkFilePath = join(CHUNK_DIR, `${uploadedChunkId}.tar`)
+
+      if (!existsSync(chunkFilePath)) {
+        return NextResponse.json(
+          { error: 'Uploaded chunk file not found or expired', success: false },
+          { status: 400 },
+        )
+      }
+
+      fileBuffer = readFileSync(chunkFilePath)
+      source = 'local-upload-chunked'
+      imageIdentifier = uploadedFileName || `${uploadedChunkId}.tar`
+
+      try {
+        unlinkSync(chunkFilePath)
+      } catch (cleanupError) {
+        console.warn('[ANALYZE] Failed to remove uploaded chunk file:', cleanupError)
+      }
+
+      console.log(`[DEBUG] Chunked upload assembled: ${imageIdentifier}, size: ${fileBuffer.length} bytes`)
     } else if (imageName) {
       if (!validateImageName(imageName)) {
         return NextResponse.json(
