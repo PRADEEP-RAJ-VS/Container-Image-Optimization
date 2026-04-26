@@ -14,6 +14,7 @@ import {
   type Cluster,
   type TaskDefinition,
 } from "@aws-sdk/client-ecs"
+import { execSync } from "child_process"
 
 export interface ECSDeploymentConfig {
   cluster: string
@@ -28,6 +29,12 @@ export interface ECSDeploymentConfig {
   subnets?: string[]
   securityGroups?: string[]
   assignPublicIp?: boolean
+}
+
+export interface ECSNetworkConfiguration {
+  subnets: string[]
+  securityGroups: string[]
+  assignPublicIp: boolean
 }
 
 export interface DeploymentResult {
@@ -74,11 +81,53 @@ export class ECSDeployer {
   }
 
   /**
+   * Resolve ECS network configuration.
+   * Uses explicit config first, then environment variables, and finally discovers
+   * the default VPC's subnets and the shared ECS security group via AWS CLI.
+   */
+  async resolveNetworkConfiguration(config: ECSDeploymentConfig): Promise<ECSNetworkConfiguration> {
+    const envSubnets = (process.env.ECS_SUBNET_IDS || "")
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean)
+
+    const envSecurityGroups = (process.env.ECS_SECURITY_GROUP_IDS || "")
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean)
+
+    const subnets = config.subnets && config.subnets.length > 0
+      ? config.subnets
+      : envSubnets.length > 0
+        ? envSubnets
+        : await this.discoverDefaultSubnetIds()
+
+    const securityGroups = config.securityGroups && config.securityGroups.length > 0
+      ? config.securityGroups
+      : envSecurityGroups.length > 0
+        ? envSecurityGroups
+        : [await this.ensureEcsSecurityGroup()]
+
+    const assignPublicIp = config.assignPublicIp !== false && process.env.ECS_ASSIGN_PUBLIC_IP !== "false"
+
+    return { subnets, securityGroups, assignPublicIp }
+  }
+
+  /**
    * Deploy optimized image to ECS (creates or updates service)
    */
   async deployOptimizedImage(config: ECSDeploymentConfig): Promise<DeploymentResult> {
     try {
       console.log(`[ECS] Starting deployment for ${config.taskFamily}`)
+
+      const resolvedNetwork = await this.resolveNetworkConfiguration(config)
+      config.subnets = resolvedNetwork.subnets
+      config.securityGroups = resolvedNetwork.securityGroups
+      config.assignPublicIp = resolvedNetwork.assignPublicIp
+
+      console.log(
+        `[ECS] Resolved network config - Subnets: ${config.subnets.length}, Security Groups: ${config.securityGroups.length}, Public IP: ${config.assignPublicIp ? "enabled" : "disabled"}`,
+      )
 
       // 1. Register new task definition
       const taskDefArn = await this.registerTaskDefinition(config)
@@ -124,6 +173,84 @@ export class ECSDeployer {
         success: false,
         error: message,
       }
+    }
+  }
+
+  /**
+   * Discover the default VPC subnets using AWS CLI.
+   */
+  private async discoverDefaultSubnetIds(): Promise<string[]> {
+    const vpcId = this.execAwsText(
+      `ec2 describe-vpcs --region ${this.region} --filters Name=isDefault,Values=true --query "Vpcs[0].VpcId" --output text`,
+    )
+
+    if (!vpcId || vpcId === "None") {
+      throw new Error("Unable to determine the default VPC for ECS networking")
+    }
+
+    const subnetsRaw = this.execAwsText(
+      `ec2 describe-subnets --region ${this.region} --filters Name=vpc-id,Values=${vpcId} --query "Subnets[*].SubnetId" --output text`,
+    )
+
+    const subnets = subnetsRaw
+      .split(/\s+/)
+      .map((value) => value.trim())
+      .filter(Boolean)
+
+    if (subnets.length === 0) {
+      throw new Error(`No subnets found in default VPC ${vpcId}`)
+    }
+
+    return subnets
+  }
+
+  /**
+   * Ensure a shared ECS security group exists and has the required ingress rules.
+   */
+  private async ensureEcsSecurityGroup(): Promise<string> {
+    const vpcId = this.execAwsText(
+      `ec2 describe-vpcs --region ${this.region} --filters Name=isDefault,Values=true --query "Vpcs[0].VpcId" --output text`,
+    )
+
+    if (!vpcId || vpcId === "None") {
+      throw new Error("Unable to determine the default VPC for ECS security group setup")
+    }
+
+    const existingGroupId = this.execAwsText(
+      `ec2 describe-security-groups --region ${this.region} --filters Name=group-name,Values=docker-optimizer-ecs Name=vpc-id,Values=${vpcId} --query "SecurityGroups[0].GroupId" --output text`,
+    )
+
+    if (existingGroupId && existingGroupId !== "None") {
+      return existingGroupId
+    }
+
+    const createdGroupId = this.execAwsText(
+      `ec2 create-security-group --region ${this.region} --group-name docker-optimizer-ecs --description "Security group for Docker Optimizer ECS tasks" --vpc-id ${vpcId} --query "GroupId" --output text`,
+    )
+
+    const ingressRules = [80, 443, 8080, 3000]
+    for (const port of ingressRules) {
+      try {
+        this.execAwsText(
+          `ec2 authorize-security-group-ingress --region ${this.region} --group-id ${createdGroupId} --protocol tcp --port ${port} --cidr 0.0.0.0/0 --output text`,
+        )
+      } catch (error) {
+        console.warn(`[ECS] Could not add ingress rule for port ${port}:`, error instanceof Error ? error.message : error)
+      }
+    }
+
+    return createdGroupId
+  }
+
+  /**
+   * Execute an AWS CLI command and return trimmed text output.
+   */
+  private execAwsText(command: string): string {
+    try {
+      return execSync(`aws ${command}`, { encoding: "utf-8", stdio: "pipe" }).trim()
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown AWS CLI error"
+      throw new Error(`AWS CLI command failed: aws ${command} (${message})`)
     }
   }
 

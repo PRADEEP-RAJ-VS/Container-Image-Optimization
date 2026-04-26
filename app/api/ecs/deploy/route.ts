@@ -54,41 +54,26 @@ export async function POST(request: NextRequest) {
 
     console.log(`[ECS-DEPLOY] Deploying ${imageUri} to cluster: ${cluster}`)
 
-    // Get network configuration from environment if not provided
-    const ecsSubnets = subnets && subnets.length > 0 
-      ? subnets 
-      : (process.env.ECS_SUBNET_IDS || "").split(",").filter(s => s.trim())
-    
-    const ecsSecurityGroups = securityGroups && securityGroups.length > 0
-      ? securityGroups
-      : (process.env.ECS_SECURITY_GROUP_IDS || "").split(",").filter(s => s.trim())
-    
-    const ecsAssignPublicIp = assignPublicIp !== false && (process.env.ECS_ASSIGN_PUBLIC_IP !== "false")
-
-    console.log(`[ECS-DEPLOY] Network config - Subnets: ${ecsSubnets.length}, Security Groups: ${ecsSecurityGroups.length}`)
-
-    if (ecsSubnets.length === 0) {
-      return NextResponse.json(
-        { 
-          success: false, 
-          error: "No subnets configured. Please configure ECS_SUBNET_IDS in .env.local" 
-        },
-        { status: 400 }
-      )
-    }
-
-    if (ecsSecurityGroups.length === 0) {
-      return NextResponse.json(
-        { 
-          success: false, 
-          error: "No security groups configured. Please configure ECS_SECURITY_GROUP_IDS in .env.local" 
-        },
-        { status: 400 }
-      )
-    }
-
     // Initialize ECS deployer
     const deployer = new ECSDeployer(region || process.env.AWS_REGION || "us-east-1")
+
+    // Resolve network configuration from request/env/default VPC fallbacks
+    const resolvedNetwork = await deployer.resolveNetworkConfiguration({
+      cluster,
+      serviceName,
+      taskFamily,
+      imageUri,
+      cpu: cpu || "256",
+      memory: memory || "512",
+      containerPort,
+      environment: environment || {},
+      desiredCount: desiredCount || 1,
+      subnets,
+      securityGroups,
+      assignPublicIp,
+    })
+
+    console.log(`[ECS-DEPLOY] Network config - Subnets: ${resolvedNetwork.subnets.length}, Security Groups: ${resolvedNetwork.securityGroups.length}, Public IP: ${resolvedNetwork.assignPublicIp ? "enabled" : "disabled"}`)
 
     // Deploy to ECS
     const result = await deployer.deployOptimizedImage({
@@ -101,9 +86,9 @@ export async function POST(request: NextRequest) {
       containerPort,
       environment: environment || {},
       desiredCount: desiredCount || 1,
-      subnets: ecsSubnets,
-      securityGroups: ecsSecurityGroups,
-      assignPublicIp: ecsAssignPublicIp,
+      subnets: resolvedNetwork.subnets,
+      securityGroups: resolvedNetwork.securityGroups,
+      assignPublicIp: resolvedNetwork.assignPublicIp,
     })
 
     if (!result.success) {
