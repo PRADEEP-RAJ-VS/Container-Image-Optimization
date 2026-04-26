@@ -19,6 +19,7 @@ export default function OptimizationRecommendations({ analysis }: OptimizationRe
   const [optimizedSessionId, setOptimizedSessionId] = useState<string | null>(null)
   const [optimizationComplete, setOptimizationComplete] = useState(false)
   const [ecrImageUri, setEcrImageUri] = useState<string | null>(null)
+  const directBackendBaseUrl = process.env.NEXT_PUBLIC_BACKEND_API_BASE_URL?.replace(/\/$/, "")
   const recommendations = analysis.optimizationRecommendations || []
   const optimizationScore = analysis.optimizationScore || {}
   const imageInfo = analysis.imageInfo || {}
@@ -33,6 +34,11 @@ export default function OptimizationRecommendations({ analysis }: OptimizationRe
   const handleDownloadOptimizedImage = async () => {
     setIsDownloading(true)
     try {
+      const optimizeEndpoint = directBackendBaseUrl ? `${directBackendBaseUrl}/api/optimize` : "/api/optimize"
+      const downloadEndpoint = directBackendBaseUrl
+        ? `${directBackendBaseUrl}/api/download-optimized`
+        : "/api/download-optimized"
+
       const sessionId =
         scanMetadata.sessionId ||
         analysis._sessionId ||
@@ -46,7 +52,7 @@ export default function OptimizationRecommendations({ analysis }: OptimizationRe
       const timeoutId = setTimeout(() => controller.abort(), 600000) // 10 minute timeout
 
       // Step 1: Optimize the image
-      const optimizeResponse = await fetch("/api/optimize", {
+      const optimizeResponse = await fetch(optimizeEndpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -81,7 +87,7 @@ export default function OptimizationRecommendations({ analysis }: OptimizationRe
       }
 
       // Step 2: Download the optimized image
-      const downloadResponse = await fetch("/api/download-optimized", {
+      const downloadResponse = await fetch(downloadEndpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

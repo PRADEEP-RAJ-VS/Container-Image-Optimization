@@ -16,6 +16,7 @@ interface ExportButtonProps {
 export default function ExportButton({ analysis, fileName = "docker-analysis", sessionId, imageName, onOptimizationComplete }: ExportButtonProps) {
   const [isExporting, setIsExporting] = useState(false)
   const [isOptimizing, setIsOptimizing] = useState(false)
+  const directBackendBaseUrl = process.env.NEXT_PUBLIC_BACKEND_API_BASE_URL?.replace(/\/$/, "")
 
   const downloadFile = (content: string | Blob, type: string, ext: string) => {
     const blob = content instanceof Blob ? content : new Blob([content], { type })
@@ -78,8 +79,13 @@ export default function ExportButton({ analysis, fileName = "docker-analysis", s
     setIsOptimizing(true)
     setIsExporting(true)
     try {
+      const optimizeEndpoint = directBackendBaseUrl ? `${directBackendBaseUrl}/api/optimize` : "/api/optimize"
+      const downloadEndpoint = directBackendBaseUrl
+        ? `${directBackendBaseUrl}/api/download-optimized`
+        : "/api/download-optimized"
+
       // Step 1: Optimize the image
-      const optimizeResponse = await fetch("/api/optimize", {
+      const optimizeResponse = await fetch(optimizeEndpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -115,7 +121,7 @@ export default function ExportButton({ analysis, fileName = "docker-analysis", s
       setIsOptimizing(false)
 
       // Step 2: Download the optimized image
-      const downloadResponse = await fetch("/api/download-optimized", {
+      const downloadResponse = await fetch(downloadEndpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
