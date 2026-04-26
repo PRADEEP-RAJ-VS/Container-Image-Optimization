@@ -20,6 +20,10 @@ export default function OptimizationRecommendations({ analysis }: OptimizationRe
   const [optimizationComplete, setOptimizationComplete] = useState(false)
   const [ecrImageUri, setEcrImageUri] = useState<string | null>(null)
   const directBackendBaseUrl = process.env.NEXT_PUBLIC_BACKEND_API_BASE_URL?.replace(/\/$/, "")
+  const canUseDirectBackend = !!directBackendBaseUrl && (
+    (typeof window !== "undefined" && window.location.protocol === "http:") ||
+    directBackendBaseUrl.startsWith("https://")
+  )
   const recommendations = analysis.optimizationRecommendations || []
   const optimizationScore = analysis.optimizationScore || {}
   const imageInfo = analysis.imageInfo || {}
@@ -34,8 +38,8 @@ export default function OptimizationRecommendations({ analysis }: OptimizationRe
   const handleDownloadOptimizedImage = async () => {
     setIsDownloading(true)
     try {
-      const optimizeEndpoint = directBackendBaseUrl ? `${directBackendBaseUrl}/api/optimize` : "/api/optimize"
-      const downloadEndpoint = directBackendBaseUrl
+      const optimizeEndpoint = canUseDirectBackend ? `${directBackendBaseUrl}/api/optimize` : "/api/optimize"
+      const downloadEndpoint = canUseDirectBackend
         ? `${directBackendBaseUrl}/api/download-optimized`
         : "/api/download-optimized"
 

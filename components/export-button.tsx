@@ -17,6 +17,10 @@ export default function ExportButton({ analysis, fileName = "docker-analysis", s
   const [isExporting, setIsExporting] = useState(false)
   const [isOptimizing, setIsOptimizing] = useState(false)
   const directBackendBaseUrl = process.env.NEXT_PUBLIC_BACKEND_API_BASE_URL?.replace(/\/$/, "")
+  const canUseDirectBackend = !!directBackendBaseUrl && (
+    (typeof window !== "undefined" && window.location.protocol === "http:") ||
+    directBackendBaseUrl.startsWith("https://")
+  )
 
   const downloadFile = (content: string | Blob, type: string, ext: string) => {
     const blob = content instanceof Blob ? content : new Blob([content], { type })
@@ -79,8 +83,8 @@ export default function ExportButton({ analysis, fileName = "docker-analysis", s
     setIsOptimizing(true)
     setIsExporting(true)
     try {
-      const optimizeEndpoint = directBackendBaseUrl ? `${directBackendBaseUrl}/api/optimize` : "/api/optimize"
-      const downloadEndpoint = directBackendBaseUrl
+      const optimizeEndpoint = canUseDirectBackend ? `${directBackendBaseUrl}/api/optimize` : "/api/optimize"
+      const downloadEndpoint = canUseDirectBackend
         ? `${directBackendBaseUrl}/api/download-optimized`
         : "/api/download-optimized"
 

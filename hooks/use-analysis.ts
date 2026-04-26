@@ -48,6 +48,10 @@ export function useAnalysis() {
       const formData = new FormData()
       const directBackendBaseUrl = process.env.NEXT_PUBLIC_BACKEND_API_BASE_URL?.replace(/\/$/, "")
       const isFileUpload = input instanceof File
+      const canUseDirectBackend = !!directBackendBaseUrl && (
+        (typeof window !== "undefined" && window.location.protocol === "http:") ||
+        directBackendBaseUrl.startsWith("https://")
+      )
 
       if (isFileUpload) {
         formData.append('file', input)
@@ -56,7 +60,7 @@ export function useAnalysis() {
       }
 
       // Large multipart uploads can fail on Vercel before proxying, so send file uploads directly to EC2 when configured.
-      const analyzeEndpoint = isFileUpload && directBackendBaseUrl
+      const analyzeEndpoint = isFileUpload && canUseDirectBackend
         ? `${directBackendBaseUrl}/api/analyze`
         : '/api/analyze'
 
