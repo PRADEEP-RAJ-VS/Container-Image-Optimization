@@ -129,9 +129,9 @@ export async function POST(request: NextRequest) {
     try {
       ensureSessionDirExists()
       writeFileSync(sessionFilePath, fileBuffer)
-      console.log("[ANALYZE] Stored session buffer:", sessionId, "Size:", fileBuffer.length)
+      console.log("[ANALYZE] Stored session buffer:", sessionId, "Size:", fileBuffer.length, "Path:", sessionFilePath, "SESSION_DIR:", SESSION_DIR)
     } catch (error) {
-      console.error("[ANALYZE] Failed to store session buffer:", error)
+      console.error("[ANALYZE] Failed to store session buffer:", error, "Path:", sessionFilePath, "SESSION_DIR:", SESSION_DIR)
       return NextResponse.json(
         {
           error: "Failed to persist session data for optimization. Please retry analysis.",
@@ -186,8 +186,10 @@ export function getUploadedBuffer(sessionId: string): Buffer | null {
     ensureSessionDirExists()
     const sessionFilePath = join(SESSION_DIR, `${sessionId}.tar`)
     
+    console.log("[ANALYZE] Attempting to retrieve session buffer:", sessionId, "Path:", sessionFilePath, "SESSION_DIR:", SESSION_DIR, "Exists:", existsSync(sessionFilePath))
+    
     if (!existsSync(sessionFilePath)) {
-      console.log("[ANALYZE] Session file not found:", sessionId)
+      console.log("[ANALYZE] Session file not found:", sessionId, "Checked path:", sessionFilePath)
       return null
     }
     
