@@ -180,66 +180,95 @@ export class ECSDeployer {
    * Discover the default VPC subnets using AWS CLI.
    */
   private async discoverDefaultSubnetIds(): Promise<string[]> {
-    const vpcId = this.execAwsText(
-      `ec2 describe-vpcs --region ${this.region} --filters Name=isDefault,Values=true --query "Vpcs[0].VpcId" --output text`,
-    )
+    try {
+      console.log(`[ECS] Discovering default VPC subnets in region ${this.region}`)
+      const vpcId = this.execAwsText(
+        `ec2 describe-vpcs --region ${this.region} --filters Name=isDefault,Values=true --query "Vpcs[0].VpcId" --output text`,
+      )
 
-    if (!vpcId || vpcId === "None") {
-      throw new Error("Unable to determine the default VPC for ECS networking")
+      console.log(`[ECS] Default VPC ID: ${vpcId}`)
+
+      if (!vpcId || vpcId === "None") {
+        throw new Error("Unable to determine the default VPC for ECS networking")
+      }
+
+      const subnetsRaw = this.execAwsText(
+        `ec2 describe-subnets --region ${this.region} --filters Name=vpc-id,Values=${vpcId} --query "Subnets[*].SubnetId" --output text`,
+      )
+
+      console.log(`[ECS] Subnets raw output: "${subnetsRaw}"`)
+
+      const subnets = subnetsRaw
+        .split(/\s+/)
+        .map((value) => value.trim())
+        .filter(Boolean)
+
+      console.log(`[ECS] Discovered ${subnets.length} subnets: ${subnets.join(",")}`)
+
+      if (subnets.length === 0) {
+        throw new Error(`No subnets found in default VPC ${vpcId}`)
+      }
+
+      return subnets
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      console.error(`[ECS] Failed to discover subnets: ${message}`)
+      throw error
     }
-
-    const subnetsRaw = this.execAwsText(
-      `ec2 describe-subnets --region ${this.region} --filters Name=vpc-id,Values=${vpcId} --query "Subnets[*].SubnetId" --output text`,
-    )
-
-    const subnets = subnetsRaw
-      .split(/\s+/)
-      .map((value) => value.trim())
-      .filter(Boolean)
-
-    if (subnets.length === 0) {
-      throw new Error(`No subnets found in default VPC ${vpcId}`)
-    }
-
-    return subnets
   }
 
   /**
    * Ensure a shared ECS security group exists and has the required ingress rules.
    */
   private async ensureEcsSecurityGroup(): Promise<string> {
-    const vpcId = this.execAwsText(
-      `ec2 describe-vpcs --region ${this.region} --filters Name=isDefault,Values=true --query "Vpcs[0].VpcId" --output text`,
-    )
+    try {
+      console.log(`[ECS] Ensuring ECS security group in region ${this.region}`)
+      const vpcId = this.execAwsText(
+        `ec2 describe-vpcs --region ${this.region} --filters Name=isDefault,Values=true --query "Vpcs[0].VpcId" --output text`,
+      )
 
-    if (!vpcId || vpcId === "None") {
-      throw new Error("Unable to determine the default VPC for ECS security group setup")
-    }
+      console.log(`[ECS] Default VPC ID for security group: ${vpcId}`)
 
-    const existingGroupId = this.execAwsText(
-      `ec2 describe-security-groups --region ${this.region} --filters Name=group-name,Values=docker-optimizer-ecs Name=vpc-id,Values=${vpcId} --query "SecurityGroups[0].GroupId" --output text`,
-    )
-
-    if (existingGroupId && existingGroupId !== "None") {
-      return existingGroupId
-    }
-
-    const createdGroupId = this.execAwsText(
-      `ec2 create-security-group --region ${this.region} --group-name docker-optimizer-ecs --description "Security group for Docker Optimizer ECS tasks" --vpc-id ${vpcId} --query "GroupId" --output text`,
-    )
-
-    const ingressRules = [80, 443, 8080, 3000]
-    for (const port of ingressRules) {
-      try {
-        this.execAwsText(
-          `ec2 authorize-security-group-ingress --region ${this.region} --group-id ${createdGroupId} --protocol tcp --port ${port} --cidr 0.0.0.0/0 --output text`,
-        )
-      } catch (error) {
-        console.warn(`[ECS] Could not add ingress rule for port ${port}:`, error instanceof Error ? error.message : error)
+      if (!vpcId || vpcId === "None") {
+        throw new Error("Unable to determine the default VPC for ECS security group setup")
       }
-    }
 
-    return createdGroupId
+      const existingGroupId = this.execAwsText(
+        `ec2 describe-security-groups --region ${this.region} --filters Name=group-name,Values=docker-optimizer-ecs Name=vpc-id,Values=${vpcId} --query "SecurityGroups[0].GroupId" --output text`,
+      )
+
+      console.log(`[ECS] Existing security group query result: "${existingGroupId}"`)
+
+      if (existingGroupId && existingGroupId !== "None") {
+        console.log(`[ECS] Using existing security group: ${existingGroupId}`)
+        return existingGroupId
+      }
+
+      console.log(`[ECS] Creating new security group docker-optimizer-ecs`)
+      const createdGroupId = this.execAwsText(
+        `ec2 create-security-group --region ${this.region} --group-name docker-optimizer-ecs --description "Security group for Docker Optimizer ECS tasks" --vpc-id ${vpcId} --query "GroupId" --output text`,
+      )
+
+      console.log(`[ECS] Created security group: ${createdGroupId}`)
+
+      const ingressRules = [80, 443, 8080, 3000]
+      for (const port of ingressRules) {
+        try {
+          this.execAwsText(
+            `ec2 authorize-security-group-ingress --region ${this.region} --group-id ${createdGroupId} --protocol tcp --port ${port} --cidr 0.0.0.0/0 --output text`,
+          )
+          console.log(`[ECS] Added ingress rule for port ${port}`)
+        } catch (error) {
+          console.warn(`[ECS] Could not add ingress rule for port ${port}:`, error instanceof Error ? error.message : error)
+        }
+      }
+
+      return createdGroupId
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      console.error(`[ECS] Failed to ensure security group: ${message}`)
+      throw error
+    }
   }
 
   /**
